@@ -4,6 +4,7 @@ import android.Manifest
 import android.bluetooth.BluetoothDevice
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
@@ -23,13 +24,20 @@ class BleDeviceAdapter(
         val textView = TextView(context)
         val device = devices[position]
 
-        // 检查权限
-        if (ActivityCompat.checkSelfPermission(
-                context,
-                Manifest.permission.BLUETOOTH_CONNECT
-            ) == PackageManager.PERMISSION_GRANTED
-        ) {
-            textView.text = "${device.name ?: "未知设备"}\n${device.address}"
+        val hasPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true // Android 11 及以下不需要 BLUETOOTH_CONNECT
+        }
+
+        if (hasPermission) {
+            try {
+                val name = device.name ?: "未知设备"
+                val address = device.address
+                textView.text = "$name\n$address"
+            } catch (e: SecurityException) {
+                textView.text = "权限不足，无法显示设备信息"
+            }
         } else {
             textView.text = "权限未授予，无法显示设备信息"
         }
