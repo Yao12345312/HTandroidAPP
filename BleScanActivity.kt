@@ -3,8 +3,12 @@ package com.example.bloothtomapapplication
 import android.Manifest
 import android.bluetooth.*
 import android.bluetooth.le.*
+import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.*
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import android.widget.ListView
 import android.widget.Toast
@@ -16,6 +20,7 @@ class BleScanActivity : AppCompatActivity() {
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
         (getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
     }
+
     private lateinit var bleScanner: BluetoothLeScanner
     private lateinit var listView: ListView
     private val devices = mutableListOf<BluetoothDevice>()
@@ -29,6 +34,11 @@ class BleScanActivity : AppCompatActivity() {
         if (bluetoothAdapter == null) {
             Toast.makeText(this, "此设备不支持蓝牙", Toast.LENGTH_SHORT).show()
             finish()
+            return
+        }
+
+        if (bluetoothAdapter?.isEnabled == false) {
+            Toast.makeText(this, "请启用蓝牙后重试", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -50,26 +60,22 @@ class BleScanActivity : AppCompatActivity() {
 
     private fun hasPermissions(): Boolean {
         val permissions = mutableListOf<String>()
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions.add(Manifest.permission.BLUETOOTH_SCAN)
             permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
-            //permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
         }
         permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
 
-        return permissions.all { permission ->
-            ActivityCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+        return permissions.all {
+            ActivityCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
         }
     }
 
     private fun requestPermissions() {
         val permissions = mutableListOf<String>()
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions.add(Manifest.permission.BLUETOOTH_SCAN)
             permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
-           // permissions.add(Manifest.permission.BLUETOOTH_ADVERTISE)
         }
         permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
 
@@ -77,38 +83,44 @@ class BleScanActivity : AppCompatActivity() {
     }
 
     private fun startBleScan() {
-        if (hasPermissions()) {
-            val bluetoothLeScanner = bluetoothAdapter?.bluetoothLeScanner
-            if (bluetoothLeScanner == null) {
-                Log.e("BleScanActivity", "BluetoothLeScanner is null")
-                Toast.makeText(this, "无法获取 BluetoothLeScanner", Toast.LENGTH_SHORT).show()
-                return
-            }
+        if (!hasPermissions()) {
+            Toast.makeText(this, "权限不足，请在设置中开启蓝牙相关权限", Toast.LENGTH_LONG).show()
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            intent.data = Uri.parse("package:$packageName")
+            startActivity(intent)
+            return
+        }
 
-            bleScanner = bluetoothLeScanner
-            try {
-                Log.d("BleScanActivity", "Starting BLE scan")
-                bleScanner.startScan(scanCallback)
-                Toast.makeText(this, "开始扫描BLE设备...", Toast.LENGTH_SHORT).show()
-            } catch (e: SecurityException) {
-                Log.e("BleScanActivity", "SecurityException during BLE scan", e)
-                Toast.makeText(this, "缺少扫描BLE设备的权限", Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            Log.w("BleScanActivity", "Permissions not granted")
-            Toast.makeText(this, "请授予必要的权限", Toast.LENGTH_SHORT).show()
+        val bluetoothLeScanner = bluetoothAdapter?.bluetoothLeScanner
+        if (bluetoothLeScanner == null) {
+            Log.e("BleScanActivity", "BluetoothLeScanner is null")
+            Toast.makeText(this, "无法获取 BLE 扫描器", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        bleScanner = bluetoothLeScanner
+
+        try {
+            Log.d("BleScanActivity", "开始扫描 BLE 设备")
+            bleScanner.startScan(scanCallback)
+            Toast.makeText(this, "开始扫描BLE设备...", Toast.LENGTH_SHORT).show()
+        } catch (e: SecurityException) {
+            Log.e("BleScanActivity", "权限异常，无法扫描", e)
+            Toast.makeText(this, "权限异常，无法扫描BLE", Toast.LENGTH_SHORT).show()
         }
     }
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            if (ActivityCompat.checkSelfPermission(
-                    this@BleScanActivity,
-                    Manifest.permission.BLUETOOTH_CONNECT
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                Toast.makeText(this@BleScanActivity, "权限未授予，无法显示设备信息", Toast.LENGTH_SHORT).show()
-                return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (ActivityCompat.checkSelfPermission(
+                        this@BleScanActivity,
+                        Manifest.permission.BLUETOOTH_CONNECT
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    Log.w("BleScanActivity", "权限不够，跳过设备：${result.device.name ?: "未知"}")
+                    return
+                }
             }
 
             if (!devices.contains(result.device)) {
@@ -116,11 +128,14 @@ class BleScanActivity : AppCompatActivity() {
                 adapter.notifyDataSetChanged()
             }
         }
+
     }
 
     private fun connectToDevice(device: BluetoothDevice) {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            Toast.makeText(this, "缺少连接设备的权限", Toast.LENGTH_SHORT).show()
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            Toast.makeText(this, "没有连接权限", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -135,7 +150,8 @@ class BleScanActivity : AppCompatActivity() {
                 }
             })
         } catch (e: SecurityException) {
-            Log.e("BleScanActivity", "SecurityException during device connection", e)
+            Log.e("BleScanActivity", "连接权限异常", e)
+            Toast.makeText(this, "连接设备失败：权限异常", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -143,9 +159,13 @@ class BleScanActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == requestPermissionCode) {
             if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                Log.d("BleScanActivity", "权限已全部授予")
                 startBleScan()
             } else {
                 Toast.makeText(this, "权限未授予，无法扫描BLE设备", Toast.LENGTH_SHORT).show()
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                intent.data = Uri.parse("package:$packageName")
+                startActivity(intent)
             }
         }
     }
