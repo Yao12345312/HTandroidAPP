@@ -26,6 +26,7 @@ class BleScanActivity : AppCompatActivity() {
     private val devices = mutableListOf<BluetoothDevice>()
     private lateinit var adapter: BleDeviceAdapter
     private val requestPermissionCode = 100
+    private var pendingDevice: BluetoothDevice? = null // 用于存储待连接的设备
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -54,7 +55,12 @@ class BleScanActivity : AppCompatActivity() {
 
         listView.setOnItemClickListener { _, _, position, _ ->
             val device = devices[position]
-            connectToDevice(device)
+            pendingDevice = device // 存储待连接的设备
+            if (!hasConnectPermission()) {
+                requestConnectPermission()
+            } else {
+                connectToDevice(device)
+            }
         }
     }
 
@@ -71,6 +77,14 @@ class BleScanActivity : AppCompatActivity() {
         }
     }
 
+    private fun hasConnectPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true // Android 11 及以下不需要 BLUETOOTH_CONNECT
+        }
+    }
+
     private fun requestPermissions() {
         val permissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -80,6 +94,16 @@ class BleScanActivity : AppCompatActivity() {
         permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
 
         ActivityCompat.requestPermissions(this, permissions.toTypedArray(), requestPermissionCode)
+    }
+
+    private fun requestConnectPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
+                requestPermissionCode
+            )
+        }
     }
 
     private fun startBleScan() {
@@ -132,9 +156,7 @@ class BleScanActivity : AppCompatActivity() {
     }
 
     private fun connectToDevice(device: BluetoothDevice) {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
+        if (!hasConnectPermission()) {
             Toast.makeText(this, "没有连接权限", Toast.LENGTH_SHORT).show()
             return
         }
@@ -160,9 +182,14 @@ class BleScanActivity : AppCompatActivity() {
         if (requestCode == requestPermissionCode) {
             if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
                 Log.d("BleScanActivity", "权限已全部授予")
-                startBleScan()
+                if (pendingDevice != null) {
+                    connectToDevice(pendingDevice!!)
+                    pendingDevice = null
+                } else {
+                    startBleScan()
+                }
             } else {
-                Toast.makeText(this, "权限未授予，无法扫描BLE设备", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "权限未授予，无法扫描或连接BLE设备", Toast.LENGTH_SHORT).show()
                 val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                 intent.data = Uri.parse("package:$packageName")
                 startActivity(intent)
