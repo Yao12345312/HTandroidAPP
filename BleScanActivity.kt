@@ -6,8 +6,7 @@ import android.bluetooth.le.*
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
-import android.os.Bundle
+import android.os.*
 import android.provider.Settings
 import android.util.Log
 import android.widget.ListView
@@ -19,6 +18,7 @@ import java.util.*
 
 class BleScanActivity : AppCompatActivity() {
 
+    private val TAG = "BleScanActivity"
     private val bluetoothAdapter: BluetoothAdapter? by lazy {
         (getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
     }
@@ -31,7 +31,9 @@ class BleScanActivity : AppCompatActivity() {
     private lateinit var adapter: BleDeviceAdapter
     private val requestPermissionCode = 100
     private var bluetoothGatt: BluetoothGatt? = null
-    private var pendingDevice: BluetoothDevice? = null // 用于存储待连接的设备
+    private var pendingDevice: BluetoothDevice? = null
+    private var latestData: String = "无数据"
+    private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,6 +66,8 @@ class BleScanActivity : AppCompatActivity() {
                 connectToDevice(device)
             }
         }
+
+        startDataRefresh()
     }
 
     private fun hasPermissions(): Boolean {
@@ -73,20 +77,17 @@ class BleScanActivity : AppCompatActivity() {
             permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
         }
         permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
-
         return permissions.all {
             ActivityCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
         }
     }
-//若已经获得权限，返回true
+
     private fun hasConnectPermission(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
-        } else {
-            true // Android 11 及以下无需 BLUETOOTH_CONNECT
-        }
+        } else true
     }
-//请求权限
+
     private fun requestPermissions() {
         val permissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -94,37 +95,30 @@ class BleScanActivity : AppCompatActivity() {
             permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
         }
         permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
-
         ActivityCompat.requestPermissions(this, permissions.toTypedArray(), requestPermissionCode)
     }
 
     private fun requestConnectPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
-                requestPermissionCode
-            )
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.BLUETOOTH_CONNECT), requestPermissionCode)
         }
     }
 
     private fun startBleScan() {
         if (!hasPermissions()) {
-            Toast.makeText(this, "权限不足，请在设置中开启蓝牙相关权限", Toast.LENGTH_LONG).show()
             val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
             intent.data = Uri.parse("package:$packageName")
             startActivity(intent)
             return
         }
 
-        val bluetoothLeScanner = bluetoothAdapter?.bluetoothLeScanner
-        if (bluetoothLeScanner == null) {
+        val scanner = bluetoothAdapter?.bluetoothLeScanner
+        if (scanner == null) {
             Toast.makeText(this, "无法获取 BLE 扫描器", Toast.LENGTH_SHORT).show()
             return
         }
 
-        bleScanner = bluetoothLeScanner
-
+        bleScanner = scanner
         try {
             bleScanner.startScan(scanCallback)
             Toast.makeText(this, "开始扫描BLE设备...", Toast.LENGTH_SHORT).show()
@@ -135,11 +129,7 @@ class BleScanActivity : AppCompatActivity() {
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                ActivityCompat.checkSelfPermission(this@BleScanActivity, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-            ) {
-                return
-            }
+            if (!hasConnectPermission()) return
 
             if (!devices.contains(result.device)) {
                 devices.add(result.device)
@@ -149,10 +139,7 @@ class BleScanActivity : AppCompatActivity() {
     }
 
     private fun connectToDevice(device: BluetoothDevice) {
-        if (!hasConnectPermission()) {
-            Toast.makeText(this, "没有连接权限", Toast.LENGTH_SHORT).show()
-            return
-        }
+        if (!hasConnectPermission()) return
 
         try {
             bluetoothGatt = device.connectGatt(this, false, object : BluetoothGattCallback() {
@@ -162,13 +149,7 @@ class BleScanActivity : AppCompatActivity() {
                             connectionStatus.text = "蓝牙状态: 已连接"
                             Toast.makeText(this@BleScanActivity, "已连接到设备", Toast.LENGTH_SHORT).show()
                         }
-                        if (ActivityCompat.checkSelfPermission(
-                                this@BleScanActivity,
-                                Manifest.permission.BLUETOOTH_CONNECT
-                            ) == PackageManager.PERMISSION_GRANTED
-                        ) {
-                            gatt.discoverServices()
-                        }
+                        gatt.discoverServices()
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                         runOnUiThread {
                             connectionStatus.text = "蓝牙状态: 已断开"
@@ -178,34 +159,35 @@ class BleScanActivity : AppCompatActivity() {
                 }
 
                 override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-                    if (ActivityCompat.checkSelfPermission(
-                            this@BleScanActivity,
-                            Manifest.permission.BLUETOOTH_CONNECT
-                        ) != PackageManager.PERMISSION_GRANTED
-                    ) {
-                        return
-                    }
-                    val service = gatt.services.firstOrNull()
-                    service?.characteristics?.forEach { characteristic ->
-                        if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0) {
-                            setCharacteristicNotification(gatt, characteristic, true)
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        for (service in gatt.services) {
+                            for (characteristic in service.characteristics) {
+                                if (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0) {
+                                    setCharacteristicNotification(gatt, characteristic, true)
+                                }
+                            }
                         }
+                    } else {
+                        Log.e(TAG, "服务发现失败: $status")
                     }
                 }
 
-                override fun onCharacteristicChanged(
-                    gatt: BluetoothGatt,
-                    characteristic: BluetoothGattCharacteristic
-                ) {
-                    val data = characteristic.value
-                    val hexData = data?.joinToString(" ") { String.format("0x%02X", it) } ?: "无数据"
-                    runOnUiThread {
-                        receivedData.text = "接收到的数据: $hexData"
+                override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        Log.d(TAG, "Descriptor 写入成功: ${descriptor.uuid}")
+                    } else {
+                        Log.e(TAG, "Descriptor 写入失败: ${descriptor.uuid} 状态=$status")
                     }
+                }
+
+                override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+                    val data = characteristic.value
+                    latestData = data?.joinToString(" ") { String.format("0x%02X", it) } ?: "无数据"
+                    Log.d(TAG, "接收到数据: $latestData")
                 }
             })
         } catch (e: SecurityException) {
-            Toast.makeText(this, "连接设备失败：权限异常", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "连接蓝牙设备失败：权限不足", e)
         }
     }
 
@@ -214,49 +196,56 @@ class BleScanActivity : AppCompatActivity() {
         characteristic: BluetoothGattCharacteristic,
         enable: Boolean
     ) {
-        if (!hasConnectPermission()) {
-            Toast.makeText(this, "没有连接权限", Toast.LENGTH_SHORT).show()
-            return
-        }
+        if (!hasConnectPermission()) return
 
         try {
-            gatt.setCharacteristicNotification(characteristic, enable)
+            val result = gatt.setCharacteristicNotification(characteristic, enable)
+            Log.d(TAG, "设置通知结果: $result")
+
             val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-            descriptor?.value = if (enable) BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE else BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
-            gatt.writeDescriptor(descriptor)
+            if (descriptor != null) {
+                descriptor.value = if (enable)
+                    BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                else
+                    BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
+                gatt.writeDescriptor(descriptor)
+            } else {
+                Log.e(TAG, "特征 ${characteristic.uuid} 不包含通知描述符")
+            }
         } catch (e: SecurityException) {
-            Toast.makeText(this, "设置通知失败：权限异常", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "设置通知失败：权限不足", e)
         }
+    }
+
+    private fun startDataRefresh() {
+        handler.post(object : Runnable {
+            override fun run() {
+                receivedData.text = "接收到的数据: $latestData"
+                handler.postDelayed(this, 1000)
+            }
+        })
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == requestPermissionCode) {
             if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
-                if (pendingDevice != null) {
-                    connectToDevice(pendingDevice!!)
+                pendingDevice?.let {
+                    connectToDevice(it)
                     pendingDevice = null
-                } else {
-                    startBleScan()
-                }
+                } ?: startBleScan()
             } else {
-                Toast.makeText(this, "权限未授予，操作失败", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "权限未授予", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-
-        // 检查是否有 BLUETOOTH_CONNECT 权限
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-            try {
-                bluetoothGatt?.close()
-            } catch (e: SecurityException) {
-                Toast.makeText(this, "关闭蓝牙连接失败：权限异常", Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            Toast.makeText(this, "没有权限关闭蓝牙连接", Toast.LENGTH_SHORT).show()
+        try {
+            bluetoothGatt?.close()
+        } catch (_: SecurityException) {
         }
+        handler.removeCallbacksAndMessages(null)
     }
 }
