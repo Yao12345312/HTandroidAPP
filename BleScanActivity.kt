@@ -14,6 +14,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.*
 
 class BleScanActivity : AppCompatActivity() {
@@ -130,7 +132,6 @@ class BleScanActivity : AppCompatActivity() {
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             if (!hasConnectPermission()) return
-
             if (!devices.contains(result.device)) {
                 devices.add(result.device)
                 adapter.notifyDataSetChanged()
@@ -172,18 +173,14 @@ class BleScanActivity : AppCompatActivity() {
                     }
                 }
 
-                override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-                    if (status == BluetoothGatt.GATT_SUCCESS) {
-                        Log.d(TAG, "Descriptor 写入成功: ${descriptor.uuid}")
-                    } else {
-                        Log.e(TAG, "Descriptor 写入失败: ${descriptor.uuid} 状态=$status")
-                    }
-                }
-
                 override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
                     val data = characteristic.value
                     latestData = data?.joinToString(" ") { String.format("0x%02X", it) } ?: "无数据"
                     Log.d(TAG, "接收到数据: $latestData")
+
+                    data?.let {
+                        parseAndLaunchMap(it)
+                    }
                 }
             })
         } catch (e: SecurityException) {
@@ -191,11 +188,7 @@ class BleScanActivity : AppCompatActivity() {
         }
     }
 
-    private fun setCharacteristicNotification(
-        gatt: BluetoothGatt,
-        characteristic: BluetoothGattCharacteristic,
-        enable: Boolean
-    ) {
+    private fun setCharacteristicNotification(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, enable: Boolean) {
         if (!hasConnectPermission()) return
 
         try {
@@ -203,14 +196,12 @@ class BleScanActivity : AppCompatActivity() {
             Log.d(TAG, "设置通知结果: $result")
 
             val descriptor = characteristic.getDescriptor(UUID.fromString("00002902-0000-1000-8000-00805f9b34fb"))
-            if (descriptor != null) {
-                descriptor.value = if (enable)
+            descriptor?.let {
+                it.value = if (enable)
                     BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                 else
                     BluetoothGattDescriptor.DISABLE_NOTIFICATION_VALUE
-                gatt.writeDescriptor(descriptor)
-            } else {
-                Log.e(TAG, "特征 ${characteristic.uuid} 不包含通知描述符")
+                gatt.writeDescriptor(it)
             }
         } catch (e: SecurityException) {
             Log.e(TAG, "设置通知失败：权限不足", e)
@@ -225,6 +216,75 @@ class BleScanActivity : AppCompatActivity() {
             }
         })
     }
+    //接收并解析gps数据
+    private fun parseAndLaunchMap(data: ByteArray) {
+        if (data.isEmpty() || data[0] != 0xB1.toByte()) return
+
+        try {
+            // 1. 去除开头 B1
+            val asciiStr = data.drop(1).map { it.toInt().toChar() }.joinToString("")
+            Log.d(TAG, "接收到GPS ASCII数据: $asciiStr")
+
+            var index = 0
+
+            // 2. 提取 UTC 时间（格式 hhmmss.sss，长度固定 10）
+            val utcRaw = asciiStr.substring(index, index + 10)
+            index += 10
+            val utcTime = if (utcRaw.length >= 6) {
+                val h = utcRaw.substring(0, 2)
+                val m = utcRaw.substring(2, 4)
+                val s = utcRaw.substring(4, 6)
+                "$h:$m:$s"
+            } else "未知"
+            Log.e(TAG, "成功获得时间")
+            // 3. 提取纬度（格式 ddmm.mmmm，通常 9 位）
+            val latRaw = asciiStr.substring(index, index + 9)
+            index += 9
+            Log.e(TAG, "成功获得纬度")
+            // 4. 纬度方向（1位，N/S）
+            val latDir = asciiStr.substring(index, index + 1).first()
+            index += 1
+            Log.e(TAG, "成功获得纬度方向")
+            // 5. 经度（格式 dddmm.mmmm，通常 10 位）
+            val lonRaw = asciiStr.substring(index, index + 10)
+            index += 10
+            Log.e(TAG, "成功获得经度")
+            // 6. 经度方向（1位，E/W）
+            val lonDir = asciiStr.substring(index, index + 1).first()
+            index += 1
+            Log.e(TAG, "成功获得经度方向")
+            // 7. 经纬度转换（ddmm.mmmm → 度）
+            val latitude = if (latRaw.length >= 4) {
+                val deg = latRaw.substring(0, 2).toDouble()
+                val min = latRaw.substring(2).toDouble()
+                var lat = deg + min / 60.0
+                if (latDir == 'S') lat = -lat
+                lat
+            } else 0.0
+            Log.e(TAG, "成功解算经度")
+            val longitude = if (lonRaw.length >= 5) {
+                val deg = lonRaw.substring(0, 3).toDouble()
+                val min = lonRaw.substring(3).toDouble()
+                var lon = deg + min / 60.0
+                if (lonDir == 'W') lon = -lon
+                lon
+            } else 0.0
+            Log.e(TAG, "成功解算纬度")
+            Log.d(TAG, "解析后经纬度: $latitude, $longitude，时间: $utcTime")
+
+            // 8. 跳转地图页面
+            val intent = Intent(this, MapActivity::class.java).apply {
+                putExtra("latitude", latitude)
+                putExtra("longitude", longitude)
+                putExtra("utc_time", utcTime)
+            }
+            startActivity(intent)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "GPS数据解析失败", e)
+        }
+    }
+
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
