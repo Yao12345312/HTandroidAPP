@@ -1,51 +1,87 @@
 package com.example.bloothtomapapplication
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.baidu.mapapi.CoordType
 import com.baidu.mapapi.SDKInitializer
 import com.baidu.mapapi.map.*
 import com.baidu.mapapi.model.LatLng
+import android.os.Build
+import com.baidu.mapapi.map.Marker
+import com.baidu.mapapi.map.MarkerOptions
+import com.baidu.mapapi.map.BitmapDescriptorFactory
 
 class MapActivity : AppCompatActivity() {
     private lateinit var mapView: MapView
     private lateinit var baiduMap: BaiduMap
+    private var currentMarker: Marker? = null
+
+    private val gpsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val lat = intent?.getDoubleExtra("latitude", 0.0) ?: return
+            val lon = intent.getDoubleExtra("longitude", 0.0)
+            val time = intent.getStringExtra("utc_time") ?: "未知时间"
+
+            val latLng = LatLng(lat, lon)
+            updateMarker(latLng, time)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 初始化百度地图 SDK
         SDKInitializer.setAgreePrivacy(applicationContext, true)
         SDKInitializer.initialize(applicationContext)
         SDKInitializer.setCoordType(CoordType.BD09LL)
-
+        
         setContentView(R.layout.activity_map)
 
         mapView = findViewById(R.id.bmapView)
         baiduMap = mapView.map
 
-        // 示例坐标（可替换为你的GPS解析结果）
-        val latitude = 39.915
-        val longitude = 116.404
-        val location = LatLng(latitude, longitude)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(
+                gpsReceiver,
+                IntentFilter("com.example.bloothtomapapplication.UPDATE_GPS"),
+                RECEIVER_NOT_EXPORTED
+            )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            registerReceiver(
+                gpsReceiver,
+                IntentFilter("com.example.bloothtomapapplication.UPDATE_GPS"),
+                RECEIVER_EXPORTED
+            )
+        }
+    }
 
-        // 设置缩放等级
+    private fun updateMarker(location: LatLng, time: String) {
+        // 移动摄像头
         val mapStatusUpdate = MapStatusUpdateFactory.newLatLngZoom(location, 18f)
         baiduMap.setMapStatus(mapStatusUpdate)
 
-        // 加载自定义 marker icon
-        val markerIcon = BitmapDescriptorFactory.fromResource(R.drawable.marker_icon) // 你的图标
-        if (markerIcon != null) {
-            val markerOptions = MarkerOptions()
-                .position(location)
-                .icon(markerIcon)
+        // 清除旧 Marker
+        currentMarker?.remove()
 
-            baiduMap.addOverlay(markerOptions)
+        // 安全加载 Marker 图标
+        val markerIcon = BitmapDescriptorFactory.fromResource(R.drawable.marker_icon)
+        if (markerIcon != null) {
+            val options = MarkerOptions().position(location).icon(markerIcon)
+            currentMarker = baiduMap.addOverlay(options) as Marker
+        } else {
+            Toast.makeText(this, "Marker 图标加载失败", Toast.LENGTH_SHORT).show()
         }
+
+        Toast.makeText(this, "更新时间：$time", Toast.LENGTH_SHORT).show()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        unregisterReceiver(gpsReceiver)
         mapView.onDestroy()
     }
 
