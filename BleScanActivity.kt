@@ -17,6 +17,8 @@ import androidx.core.app.ActivityCompat
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.*
+import android.os.Looper
+
 
 class BleScanActivity : AppCompatActivity() {
 
@@ -36,6 +38,7 @@ class BleScanActivity : AppCompatActivity() {
     private var pendingDevice: BluetoothDevice? = null
     private var latestData: String = "无数据"
     private val handler = Handler(Looper.getMainLooper())
+    private var mapLaunched = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -221,39 +224,22 @@ class BleScanActivity : AppCompatActivity() {
         if (data.isEmpty() || data[0] != 0xB1.toByte()) return
 
         try {
-            // 1. 去除开头 B1
             val asciiStr = data.drop(1).map { it.toInt().toChar() }.joinToString("")
-            Log.d(TAG, "接收到GPS ASCII数据: $asciiStr")
 
             var index = 0
-
-            // 2. 提取 UTC 时间（格式 hhmmss.sss，长度固定 10）
-            val utcRaw = asciiStr.substring(index, index + 10)
-            index += 10
+            val utcRaw = asciiStr.substring(index, index + 10).also { index += 10 }
             val utcTime = if (utcRaw.length >= 6) {
                 val h = utcRaw.substring(0, 2)
                 val m = utcRaw.substring(2, 4)
                 val s = utcRaw.substring(4, 6)
                 "$h:$m:$s"
             } else "未知"
-            Log.e(TAG, "成功获得时间")
-            // 3. 提取纬度（格式 ddmm.mmmm，通常 9 位）
-            val latRaw = asciiStr.substring(index, index + 9)
-            index += 9
-            Log.e(TAG, "成功获得纬度")
-            // 4. 纬度方向（1位，N/S）
-            val latDir = asciiStr.substring(index, index + 1).first()
-            index += 1
-            Log.e(TAG, "成功获得纬度方向")
-            // 5. 经度（格式 dddmm.mmmm，通常 10 位）
-            val lonRaw = asciiStr.substring(index, index + 10)
-            index += 10
-            Log.e(TAG, "成功获得经度")
-            // 6. 经度方向（1位，E/W）
+
+            val latRaw = asciiStr.substring(index, index + 9).also { index += 9 }
+            val latDir = asciiStr.substring(index, index + 1).first().also { index += 1 }
+            val lonRaw = asciiStr.substring(index, index + 10).also { index += 10 }
             val lonDir = asciiStr.substring(index, index + 1).first()
-            index += 1
-            Log.e(TAG, "成功获得经度方向")
-            // 7. 经纬度转换（ddmm.mmmm → 度）
+
             val latitude = if (latRaw.length >= 4) {
                 val deg = latRaw.substring(0, 2).toDouble()
                 val min = latRaw.substring(2).toDouble()
@@ -261,7 +247,7 @@ class BleScanActivity : AppCompatActivity() {
                 if (latDir == 'S') lat = -lat
                 lat
             } else 0.0
-            Log.e(TAG, "成功解算经度")
+
             val longitude = if (lonRaw.length >= 5) {
                 val deg = lonRaw.substring(0, 3).toDouble()
                 val min = lonRaw.substring(3).toDouble()
@@ -269,16 +255,21 @@ class BleScanActivity : AppCompatActivity() {
                 if (lonDir == 'W') lon = -lon
                 lon
             } else 0.0
-            Log.e(TAG, "成功解算纬度")
-            Log.d(TAG, "解析后经纬度: $latitude, $longitude，时间: $utcTime")
 
-            // 8. 跳转地图页面
-            val intent = Intent(this, MapActivity::class.java).apply {
+            // 向 MapActivity 发送广播
+            val intent = Intent("com.example.bloothtomapapplication.UPDATE_GPS").apply {
                 putExtra("latitude", latitude)
                 putExtra("longitude", longitude)
                 putExtra("utc_time", utcTime)
             }
-            startActivity(intent)
+            sendBroadcast(intent)
+
+            //  第一次时启动地图
+            if (!mapLaunched) {
+                mapLaunched = true
+                val startIntent = Intent(this, MapActivity::class.java)
+                startActivity(startIntent)
+            }
 
         } catch (e: Exception) {
             Log.e(TAG, "GPS数据解析失败", e)
