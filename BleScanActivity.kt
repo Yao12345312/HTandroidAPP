@@ -14,8 +14,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
+
 import java.util.*
 import android.os.Looper
 
