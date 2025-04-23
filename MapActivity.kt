@@ -15,6 +15,9 @@ import android.os.Build
 import com.baidu.mapapi.map.Marker
 import com.baidu.mapapi.map.MarkerOptions
 import com.baidu.mapapi.map.BitmapDescriptorFactory
+import android.graphics.Bitmap
+import android.graphics.Canvas
+
 
 class MapActivity : AppCompatActivity() {
     private lateinit var mapView: MapView
@@ -38,7 +41,7 @@ class MapActivity : AppCompatActivity() {
         SDKInitializer.setAgreePrivacy(applicationContext, true)
         SDKInitializer.initialize(applicationContext)
         SDKInitializer.setCoordType(CoordType.BD09LL)
-        
+
         setContentView(R.layout.activity_map)
 
         mapView = findViewById(R.id.bmapView)
@@ -60,16 +63,25 @@ class MapActivity : AppCompatActivity() {
     }
 
     private fun updateMarker(location: LatLng, time: String) {
-        // 移动摄像头
+        // 有新的经纬度数据传入时，更新地图中心点
         val mapStatusUpdate = MapStatusUpdateFactory.newLatLngZoom(location, 18f)
         baiduMap.setMapStatus(mapStatusUpdate)
 
         // 清除旧 Marker
         currentMarker?.remove()
 
-        // 安全加载 Marker 图标
-        val markerIcon = BitmapDescriptorFactory.fromResource(R.drawable.marker_icon)
-        if (markerIcon != null) {
+        // 将 XML Drawable 转换为 Bitmap 并生成 BitmapDescriptor
+        val drawable = resources.getDrawable(R.drawable.marker_icon, theme)
+        val width = drawable.intrinsicWidth
+        val height = drawable.intrinsicHeight
+
+        if (width > 0 && height > 0) {
+            drawable.setBounds(0, 0, width, height)
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            drawable.draw(canvas)
+
+            val markerIcon = BitmapDescriptorFactory.fromBitmap(bitmap)
             val options = MarkerOptions().position(location).icon(markerIcon)
             currentMarker = baiduMap.addOverlay(options) as Marker
         } else {
@@ -78,6 +90,7 @@ class MapActivity : AppCompatActivity() {
 
         Toast.makeText(this, "更新时间：$time", Toast.LENGTH_SHORT).show()
     }
+
 
     override fun onDestroy() {
         super.onDestroy()
