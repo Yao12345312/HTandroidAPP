@@ -1,14 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-    <uses-permission android:name="android.permission.BLUETOOTH" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+
+    <!--允许App发现和配对蓝牙设备（兼容低版本）-->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+
+    <!--若App需要扫描蓝牙设备，申请此权限-->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+
+    <!--若App使当前设备可供其他蓝牙设备发现，申请此权限-->
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+
+    <!--若App与蓝牙设备配对、通讯，申请此权限-->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!--若App通过蓝牙扫描结果获取物理位置，申请此权限-->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -19,7 +36,9 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.BloothToMapApplication"
         tools:targetApi="31">
+
         <activity android:name=".BleScanActivity" />
+        <activity android:name=".MapActivity" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -31,6 +50,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <meta-data
+            android:name="com.baidu.lbsapi.API_KEY"
+            android:value="abzFGqXc9MsmAnDBAcrR1no2elHMY522" />
     </application>
 
 </manifest>
