@@ -25,6 +25,10 @@ class MapActivity : AppCompatActivity() {
 
     private lateinit var textSentData: TextView  // 用于显示发送的数据
 
+    private val handler = Handler(Looper.getMainLooper())
+    private var sendRunnable: Runnable? = null
+    private var currentTargetLat: Double? = null
+    private var currentTargetLon: Double? = null
 
     private val gpsReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -86,6 +90,21 @@ class MapActivity : AppCompatActivity() {
 
         textSentData = findViewById(R.id.text_sent_data)
 
+        btnConfirmNav.setOnClickListener {
+            selectedLatLng?.let {
+                currentTargetLat = it.latitude
+                currentTargetLon = it.longitude
+
+                startRepeatedSend()
+
+                Toast.makeText(this, "开始持续发送目标点", Toast.LENGTH_SHORT).show()
+            } ?: Toast.makeText(this, "未选择目标点", Toast.LENGTH_SHORT).show()
+
+            isSelectingNav = false
+            btnConfirmNav.visibility = Button.GONE
+        }
+
+
         btnSelectNav.setOnClickListener {
             isSelectingNav = true
             btnConfirmNav.visibility = Button.VISIBLE
@@ -102,26 +121,16 @@ class MapActivity : AppCompatActivity() {
 
             override fun onMapPoiClick(poi: com.baidu.mapapi.map.MapPoi?) {}
         })
-
-        btnConfirmNav.setOnClickListener {
-            selectedLatLng?.let {
-                sendTargetPointViaBle(it.latitude, it.longitude)
-                Toast.makeText(this, "已发送目标点", Toast.LENGTH_SHORT).show()
-            } ?: Toast.makeText(this, "未选择目标点", Toast.LENGTH_SHORT).show()
-
-            isSelectingNav = false
-            btnConfirmNav.visibility = Button.GONE
-        }
     }
 
     private fun sendTargetPointViaBle(lat: Double, lon: Double) {
-        val dataToSend = "T:$lat,$lon"  // 与单片机通讯的格式
+        val dataToSend = "T:$lat,$lon"
 
-        // 更新 UI 显示发送的内容
         runOnUiThread {
             textSentData.text = "发送内容: $dataToSend"
         }
 
+        // 使用广播方式传递给 BleScanActivity 发蓝牙数据
         val intent = Intent("com.example.bloothtomapapplication.SEND_TARGET").apply {
             putExtra("target_lat", lat)
             putExtra("target_lon", lon)
@@ -129,11 +138,32 @@ class MapActivity : AppCompatActivity() {
         sendBroadcast(intent)
     }
 
+    private fun startRepeatedSend() {
+        stopRepeatedSend()  // 先清除旧任务
+        sendRunnable = object : Runnable {
+            override fun run() {
+                val lat = currentTargetLat ?: return
+                val lon = currentTargetLon ?: return
+                sendTargetPointViaBle(lat, lon)
+                handler.postDelayed(this, 500) // 每隔1秒发送一次
+            }
+        }
+        handler.post(sendRunnable!!)
+    }
+
+    private fun stopRepeatedSend() {
+        sendRunnable?.let {
+            handler.removeCallbacks(it)
+        }
+        sendRunnable = null
+    }
+
 
     override fun onDestroy() {
         super.onDestroy()
         unregisterReceiver(gpsReceiver)
         mapView.onDestroy()
+        stopRepeatedSend()
     }
 
     override fun onResume() {
