@@ -1,37 +1,58 @@
 package com.example.bloothtomapapplication
 
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.os.Bundle
+import android.content.*
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.os.*
+import android.widget.Button
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.baidu.mapapi.CoordType
 import com.baidu.mapapi.SDKInitializer
 import com.baidu.mapapi.map.*
 import com.baidu.mapapi.model.LatLng
-import android.os.Build
-import com.baidu.mapapi.map.Marker
-import com.baidu.mapapi.map.MarkerOptions
-import com.baidu.mapapi.map.BitmapDescriptorFactory
-import android.graphics.Bitmap
-import android.graphics.Canvas
-
+import android.widget.TextView
 
 class MapActivity : AppCompatActivity() {
+
     private lateinit var mapView: MapView
     private lateinit var baiduMap: BaiduMap
-    private var currentMarker: Marker? = null
+    private lateinit var btnSelectNav: Button
+    private lateinit var btnConfirmNav: Button
+
+    private var isSelectingNav = false
+    private var selectedLatLng: LatLng? = null
+
+    private lateinit var textSentData: TextView  // 用于显示发送的数据
+
 
     private val gpsReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val lat = intent?.getDoubleExtra("latitude", 0.0) ?: return
             val lon = intent.getDoubleExtra("longitude", 0.0)
-            val time = intent.getStringExtra("utc_time") ?: "未知时间"
+            val point = LatLng(lat, lon)
 
-            val latLng = LatLng(lat, lon)
-            updateMarker(latLng, time)
+            runOnUiThread {
+                baiduMap.clear()
+
+                // 加载原始图标
+                val originalBitmap = BitmapFactory.decodeResource(resources, R.drawable.marker_icon)
+
+                // 缩放图标：这里将图标缩小为 80x80 像素，修改为你需要的尺寸
+                val scaledBitmap = Bitmap.createScaledBitmap(originalBitmap, 80, 80, false)
+
+                // 创建 MarkerOptions，设置缩放后的图标
+                val markerOptions = MarkerOptions()
+                    .position(point)
+                    .title("当前位置")
+                    .icon(BitmapDescriptorFactory.fromBitmap(scaledBitmap))
+
+                // 添加 marker 到地图
+                baiduMap.addOverlay(markerOptions)
+
+                // 动画效果：地图移动到标记点并放大到适合的级别
+                baiduMap.animateMapStatus(MapStatusUpdateFactory.newLatLngZoom(point, 18f))
+            }
         }
     }
 
@@ -46,6 +67,8 @@ class MapActivity : AppCompatActivity() {
 
         mapView = findViewById(R.id.bmapView)
         baiduMap = mapView.map
+        btnSelectNav = findViewById(R.id.btn_select_nav)
+        btnConfirmNav = findViewById(R.id.btn_confirm_nav)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(
@@ -60,35 +83,50 @@ class MapActivity : AppCompatActivity() {
                 RECEIVER_EXPORTED
             )
         }
-    }
 
-    private fun updateMarker(location: LatLng, time: String) {
-        // 有新的经纬度数据传入时，更新地图中心点
-        val mapStatusUpdate = MapStatusUpdateFactory.newLatLngZoom(location, 18f)
-        baiduMap.setMapStatus(mapStatusUpdate)
+        textSentData = findViewById(R.id.text_sent_data)
 
-        // 清除旧 Marker
-        currentMarker?.remove()
-
-        // 将 XML Drawable 转换为 Bitmap 并生成 BitmapDescriptor
-        val drawable = resources.getDrawable(R.drawable.marker_icon, theme)
-        val width = drawable.intrinsicWidth
-        val height = drawable.intrinsicHeight
-
-        if (width > 0 && height > 0) {
-            drawable.setBounds(0, 0, width, height)
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            drawable.draw(canvas)
-
-            val markerIcon = BitmapDescriptorFactory.fromBitmap(bitmap)
-            val options = MarkerOptions().position(location).icon(markerIcon)
-            currentMarker = baiduMap.addOverlay(options) as Marker
-        } else {
-            Toast.makeText(this, "Marker 图标加载失败", Toast.LENGTH_SHORT).show()
+        btnSelectNav.setOnClickListener {
+            isSelectingNav = true
+            btnConfirmNav.visibility = Button.VISIBLE
+            Toast.makeText(this, "请点击地图选择导航点", Toast.LENGTH_SHORT).show()
         }
 
-        Toast.makeText(this, "更新时间：$time", Toast.LENGTH_SHORT).show()
+        baiduMap.setOnMapClickListener(object : BaiduMap.OnMapClickListener {
+            override fun onMapClick(p: LatLng?) {
+                if (isSelectingNav && p != null) {
+                    selectedLatLng = p
+                    Toast.makeText(this@MapActivity, "选中: ${p.latitude}, ${p.longitude}", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            override fun onMapPoiClick(poi: com.baidu.mapapi.map.MapPoi?) {}
+        })
+
+        btnConfirmNav.setOnClickListener {
+            selectedLatLng?.let {
+                sendTargetPointViaBle(it.latitude, it.longitude)
+                Toast.makeText(this, "已发送目标点", Toast.LENGTH_SHORT).show()
+            } ?: Toast.makeText(this, "未选择目标点", Toast.LENGTH_SHORT).show()
+
+            isSelectingNav = false
+            btnConfirmNav.visibility = Button.GONE
+        }
+    }
+
+    private fun sendTargetPointViaBle(lat: Double, lon: Double) {
+        val dataToSend = "T:$lat,$lon"  // 与单片机通讯的格式
+
+        // 更新 UI 显示发送的内容
+        runOnUiThread {
+            textSentData.text = "发送内容: $dataToSend"
+        }
+
+        val intent = Intent("com.example.bloothtomapapplication.SEND_TARGET").apply {
+            putExtra("target_lat", lat)
+            putExtra("target_lon", lon)
+        }
+        sendBroadcast(intent)
     }
 
 
