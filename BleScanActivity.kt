@@ -15,6 +15,11 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 
+import android.content.BroadcastReceiver
+import android.content.Context
+
+import android.content.IntentFilter
+
 import java.util.*
 import android.os.Looper
 
@@ -38,6 +43,11 @@ class BleScanActivity : AppCompatActivity() {
     private var latestData: String = "无数据"
     private val handler = Handler(Looper.getMainLooper())
     private var mapLaunched = false
+
+    // 引入共享状态管理
+    private var isHandlingTarget = false // 是否正在处理目标点选择
+
+    private val dataQueue: Queue<ByteArray> = LinkedList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,9 +81,32 @@ class BleScanActivity : AppCompatActivity() {
             }
         }
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(targetReceiver, IntentFilter("com.example.bloothtomapapplication.SEND_TARGET"), RECEIVER_NOT_EXPORTED)
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            registerReceiver(targetReceiver, IntentFilter("com.example.bloothtomapapplication.SEND_TARGET"),
+                RECEIVER_EXPORTED)
+        }
+
+
         startDataRefresh()
     }
 
+    private fun handleIncomingData(data: ByteArray) {
+        synchronized(dataQueue) {
+            dataQueue.offer(data)
+        }
+        processQueue()
+    }
+
+    private fun processQueue() {
+        synchronized(dataQueue) {
+            if (isHandlingTarget) return // 如果正在处理目标点，暂停队列处理
+
+            val nextData = dataQueue.poll() ?: return
+            parseAndLaunchMap(nextData)
+        }
+    }
     private fun hasPermissions(): Boolean {
         val permissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -224,7 +257,6 @@ class BleScanActivity : AppCompatActivity() {
 
         try {
             val asciiStr = data.drop(1).map { it.toInt().toChar() }.joinToString("")
-
             var index = 0
             val utcRaw = asciiStr.substring(index, index + 10).also { index += 10 }
             val utcTime = if (utcRaw.length >= 6) {
@@ -255,43 +287,85 @@ class BleScanActivity : AppCompatActivity() {
                 lon
             } else 0.0
 
-            // 向 MapActivity 发送广播
-            val intent = Intent("com.example.bloothtomapapplication.UPDATE_GPS").apply {
-                putExtra("latitude", latitude)
-                putExtra("longitude", longitude)
-                putExtra("utc_time", utcTime)
-            }
-            sendBroadcast(intent)
+            Log.d(TAG, "解析后经纬度: $latitude, $longitude，时间: $utcTime")
 
-            //  第一次时启动地图
-            if (!mapLaunched) {
-                mapLaunched = true
-                val startIntent = Intent(this, MapActivity::class.java)
-                startActivity(startIntent)
-            }
+            runOnUiThread {
+                // Send broadcast with the parsed GPS data
+                val intent = Intent("com.example.bloothtomapapplication.UPDATE_GPS").apply {
+                    putExtra("latitude", latitude)
+                    putExtra("longitude", longitude)
+                    putExtra("utc_time", utcTime)
+                }
+                sendBroadcast(intent)
 
+                if (!mapLaunched) {
+                    mapLaunched = true
+                    val startIntent = Intent(this, MapActivity::class.java)
+                    startActivity(startIntent)
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "GPS数据解析失败", e)
         }
     }
 
 
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
         if (requestCode == requestPermissionCode) {
             if (grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                Log.d(TAG, "权限已授予")
                 pendingDevice?.let {
                     connectToDevice(it)
                     pendingDevice = null
                 } ?: startBleScan()
             } else {
+                Log.e(TAG, "权限未授予")
                 Toast.makeText(this, "权限未授予", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
+
+    private fun sendDataViaBle(data: String) {
+        if (!hasConnectPermission()) return
+
+        try {
+            val serviceUUID = UUID.fromString("0000fff0-0000-1000-8000-00805f9b34fb")
+            val writeUUID = UUID.fromString("0000fff2-0000-1000-8000-00805f9b34fb")
+
+            val gatt = bluetoothGatt ?: return
+            val service = gatt.getService(serviceUUID) ?: return
+            val characteristic = service.getCharacteristic(writeUUID) ?: return
+
+            characteristic.value = data.toByteArray()
+            gatt.writeCharacteristic(characteristic)
+        } catch (e: SecurityException) {
+            Log.e(TAG, "写入特征值失败：权限不足", e)
+        }
+    }
+
+
+//蓝牙回传经纬度坐标
+    private val targetReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val lat = intent?.getDoubleExtra("target_lat", 0.0) ?: return
+            val lon = intent.getDoubleExtra("target_lon", 0.0)
+            isHandlingTarget = true // 标记正在处理目标点
+            // 你可以根据单片机协议格式化数据
+            val msg = "T:${lat},${lon}" // 示例格式：T:31.234567,121.123456
+
+            sendDataViaBle(msg)
+            isHandlingTarget = false // 完成处理后解除标记
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        unregisterReceiver(targetReceiver)
+
         try {
             bluetoothGatt?.close()
         } catch (_: SecurityException) {
