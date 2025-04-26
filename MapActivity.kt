@@ -124,19 +124,31 @@ class MapActivity : AppCompatActivity() {
     }
 
     private fun sendTargetPointViaBle(lat: Double, lon: Double) {
-        val dataToSend = "T:$lat,$lon"
+        // 格式化保留小数点后10位
+        val formattedLat = String.format("%.10f", lat)
+        val formattedLon = String.format("%.10f", lon)
+
+        // 拼接数据格式（比如 T:23.1275716667,114.3020566667）
+        val dataToSend = "T:$formattedLat,$formattedLon"
+
+        // 将字符串转为字节数组（ASCII）
+        val byteArray = dataToSend.toByteArray(Charsets.US_ASCII)
+
+        // 将字节数组转换为16进制表示
+        val hexString = byteArray.joinToString(" ") { String.format("0x%02X", it) }
 
         runOnUiThread {
-            textSentData.text = "发送内容: $dataToSend"
+            textSentData.text = "发送内容: $hexString"  // 显示16进制数据
         }
 
         // 使用广播方式传递给 BleScanActivity 发蓝牙数据
         val intent = Intent("com.example.bloothtomapapplication.SEND_TARGET").apply {
-            putExtra("target_lat", lat)
-            putExtra("target_lon", lon)
+            putExtra("target_data", byteArray)  // 发送字节数组（ASCII 16进制数据）
         }
         sendBroadcast(intent)
     }
+
+
 
     private fun startRepeatedSend() {
         stopRepeatedSend()  // 先清除旧任务
