@@ -254,7 +254,7 @@ class BleScanActivity : AppCompatActivity() {
     //接收并解析gps数据
     private fun parseAndLaunchMap(data: ByteArray) {
         if (data.isEmpty() || data[0] != 0xB1.toByte()) return
-
+        Log.d(TAG, "gps数据非空")
         try {
             val asciiStr = data.drop(1).map { it.toInt().toChar() }.joinToString("")
             var index = 0
@@ -265,27 +265,30 @@ class BleScanActivity : AppCompatActivity() {
                 val s = utcRaw.substring(4, 6)
                 "$h:$m:$s"
             } else "未知"
-
-            val latRaw = asciiStr.substring(index, index + 9).also { index += 9 }
+            Log.d(TAG, "成功接收时间")
+            val latRaw = asciiStr.substring(index, index + 10).also { index += 10}
             val latDir = asciiStr.substring(index, index + 1).first().also { index += 1 }
-            val lonRaw = asciiStr.substring(index, index + 10).also { index += 10 }
+            val lonRaw = asciiStr.substring(index, index + 11).also { index += 11 }
             val lonDir = asciiStr.substring(index, index + 1).first()
 
-            val latitude = if (latRaw.length >= 4) {
-                val deg = latRaw.substring(0, 2).toDouble()
-                val min = latRaw.substring(2).toDouble()
+            val latitude = if (latRaw.length >= 7) { // 最少7位才能包含小数点后5位
+                val deg = latRaw.substring(0, 2).toDouble()  // 纬度是两位度数
+                val min = latRaw.substring(2).toDouble()     // 剩下是分，带小数
                 var lat = deg + min / 60.0
                 if (latDir == 'S') lat = -lat
                 lat
             } else 0.0
+            Log.d(TAG, "成功解算纬度")
 
-            val longitude = if (lonRaw.length >= 5) {
-                val deg = lonRaw.substring(0, 3).toDouble()
-                val min = lonRaw.substring(3).toDouble()
+            val longitude = if (lonRaw.length >= 8) { // 最少8位才能包含小数点后5位
+                val deg = lonRaw.substring(0, 3).toDouble()  // 经度是三位度数
+                val min = lonRaw.substring(3).toDouble()     // 剩下是分，带小数
                 var lon = deg + min / 60.0
                 if (lonDir == 'W') lon = -lon
                 lon
             } else 0.0
+            Log.d(TAG, "成功解算经度")
+
 
             Log.d(TAG, "解析后经纬度: $latitude, $longitude，时间: $utcTime")
 
@@ -349,18 +352,25 @@ class BleScanActivity : AppCompatActivity() {
 
 
 //蓝牙回传经纬度坐标
-    private val targetReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            val lat = intent?.getDoubleExtra("target_lat", 0.0) ?: return
-            val lon = intent.getDoubleExtra("target_lon", 0.0)
-            isHandlingTarget = true // 标记正在处理目标点
-            // 你可以根据单片机协议格式化数据
-            val msg = "T:${lat},${lon}" // 示例格式：T:31.234567,121.123456
+private val targetReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+        val lat = intent?.getDoubleExtra("target_lat", 0.0) ?: return
+        val lon = intent.getDoubleExtra("target_lon", 0.0)
+        isHandlingTarget = true // 标记正在处理目标点
 
-            sendDataViaBle(msg)
-            isHandlingTarget = false // 完成处理后解除标记
-        }
+        // 保留到小数点后7位
+        val formattedLat = String.format("%.7f", lat)
+        val formattedLon = String.format("%.7f", lon)
+
+        // 按协议打包发送内容
+        val msg = "T:${formattedLat},${formattedLon}"  // 示例格式：T:31.2345678,121.1234568
+
+        sendDataViaBle(msg)
+        Log.d(TAG, "发送的经纬度: $formattedLat, $formattedLon ")
+        isHandlingTarget = false // 完成处理后解除标记
     }
+}
+
 
     override fun onDestroy() {
         super.onDestroy()
