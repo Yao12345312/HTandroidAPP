@@ -22,6 +22,7 @@ import android.content.IntentFilter
 
 import java.util.*
 import android.os.Looper
+import com.baidu.mapapi.model.LatLng
 
 
 class BleScanActivity : AppCompatActivity() {
@@ -291,12 +292,15 @@ class BleScanActivity : AppCompatActivity() {
 
 
             Log.d(TAG, "解析后经纬度: $latitude, $longitude，时间: $utcTime")
-
+            //定义转换成百度地图坐标系后的经纬度
+            val bd09LatLng = wgs84ToBd09(latitude, longitude)
+            Log.d(TAG, "转换后百度坐标: ${bd09LatLng.latitude}, ${bd09LatLng.longitude}")
+            //若需要更换数据源，修改putExtra的key值即可
             runOnUiThread {
                 // Send broadcast with the parsed GPS data
                 val intent = Intent("com.example.bloothtomapapplication.UPDATE_GPS").apply {
-                    putExtra("latitude", latitude)
-                    putExtra("longitude", longitude)
+                    putExtra("latitude", bd09LatLng.latitude)
+                    putExtra("longitude",bd09LatLng.longitude)
                     putExtra("utc_time", utcTime)
                 }
                 sendBroadcast(intent)
@@ -312,6 +316,70 @@ class BleScanActivity : AppCompatActivity() {
         }
     }
 
+    // WGS-84 → GCJ-02
+    private fun wgs84ToGcj02(lat: Double, lon: Double): LatLng {
+        val a = 6378245.0
+        val ee = 0.00669342162296594323
+
+        if (outOfChina(lat, lon)) return LatLng(lat, lon)
+
+        var dLat = transformLat(lon - 105.0, lat - 35.0)
+        var dLon = transformLon(lon - 105.0, lat - 35.0)
+        val radLat = lat / 180.0 * Math.PI
+        var magic = Math.sin(radLat)
+        magic = 1 - ee * magic * magic
+        val sqrtMagic = Math.sqrt(magic)
+        dLat = dLat * 180.0 / ((a * (1 - ee)) / (magic * sqrtMagic) * Math.PI)
+        dLon = dLon * 180.0 / (a / sqrtMagic * Math.cos(radLat) * Math.PI)
+        val mgLat = lat + dLat
+        val mgLon = lon + dLon
+        return LatLng(mgLat, mgLon)
+    }
+
+    // GCJ-02 → BD-09
+    private fun gcj02ToBd09(lat: Double, lon: Double): LatLng {
+        val z = Math.sqrt(lon * lon + lat * lat) + 0.00002 * Math.sin(lat * Math.PI * 3000.0 / 180.0)
+        val theta = Math.atan2(lat, lon) + 0.000003 * Math.cos(lon * Math.PI * 3000.0 / 180.0)
+        val bdLon = z * Math.cos(theta) + 0.0065
+        val bdLat = z * Math.sin(theta) + 0.006
+        return LatLng(bdLat, bdLon)
+    }
+
+    // 综合封装：WGS-84 → BD-09
+    private fun wgs84ToBd09(lat: Double, lon: Double): LatLng {
+        val gcj = wgs84ToGcj02(lat, lon)
+        return gcj02ToBd09(gcj.latitude, gcj.longitude)
+    }
+
+    // 判断是否在中国
+    private fun outOfChina(lat: Double, lon: Double): Boolean {
+        return lon < 72.004 || lon > 137.8347 || lat < 0.8293 || lat > 55.8271
+    }
+
+    // 经纬度偏移量计算工具
+    private fun transformLat(x: Double, y: Double): Double {
+        var ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y +
+                0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x))
+        ret += (20.0 * Math.sin(6.0 * x * Math.PI) +
+                20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0
+        ret += (20.0 * Math.sin(y * Math.PI) +
+                40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0
+        ret += (160.0 * Math.sin(y / 12.0 * Math.PI) +
+                320.0 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0
+        return ret
+    }
+
+    private fun transformLon(x: Double, y: Double): Double {
+        var ret = 300.0 + x + 2.0 * y + 0.1 * x * x +
+                0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x))
+        ret += (20.0 * Math.sin(6.0 * x * Math.PI) +
+                20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0
+        ret += (20.0 * Math.sin(x * Math.PI) +
+                40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0
+        ret += (150.0 * Math.sin(x / 12.0 * Math.PI) +
+                300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0
+        return ret
+    }
 
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
